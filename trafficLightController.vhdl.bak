@@ -1,0 +1,199 @@
+library ieee;
+use ieee.std_logic_1164.ALL;
+
+entity trafficLightController is
+    port (
+        MSC : IN STD_LOGIC_VECTOR(3 downto 0);
+        SSC : IN STD_LOGIC_VECTOR(3 downto 0);
+        SSCS : IN STD_LOGIC;
+        GClock : IN STD_LOGIC;
+        GReset : IN STD_LOGIC;
+
+        MSTL : OUT STD_LOGIC_VECTOR(2 downto 0);
+        SSTL : OUT STD_LOGIC_VECTOR(2 downto 0);
+        BCD1 : OUT STD_LOGIC_VECTOR(3 downto 0);
+        BCD2 : OUT STD_LOGIC_VECTOR(3 downto 0)
+    );
+end entity trafficLightController;
+
+architecture rtl of trafficLightController is
+    constant MAX_STATE : integer := 4;
+    constant MT : STD_LOGIC_VECTOR(3 downto 0) := "010";
+    constant SST : STD_LOGIC_VECTOR(3 downto 0) := "010";
+
+
+    component nbit_register IS 
+        generic ( 
+                    BITS : integer := 8
+                );
+        PORT (
+                 in_val : IN STD_LOGIC_VECTOR(BITS - 1 DOWNTO 0);
+                 in_load : IN STD_LOGIC;
+                 in_resetBar : IN STD_LOGIC;
+                 in_clock : IN STD_LOGIC;
+                 out_val : OUT STD_LOGIC_VECTOR(BITS - 1 DOWNTO 0)
+             );
+    END component;
+
+    component counter is
+    generic ( 
+                BITS : integer := 4
+            );
+    port (
+        incr : in STD_LOGIC;
+        resetBar : in STD_LOGIC;
+        clock : in STD_LOGIC;
+        compare : in STD_LOGIC_VECTOR(BITS - 1 downto 0);
+        val : out STD_LOGIC_VECTOR(BITS - 1 downto 0);
+        val_gt : out STD_LOGIC;
+        val_lt : out STD_LOGIC;
+        val_gteq : out STD_LOGIC;
+        val_lteq : out STD_LOGIC;
+        val_equal : out STD_LOGIC
+    );
+    end component;
+
+    component load_default_state is
+    generic (
+        MAX_STATE : INTEGER := 8
+            );
+    port (
+             current_state : in std_logic_vector(MAX_STATE downto 0);
+             default_state : in std_logic_vector(MAX_STATE downto 0);
+             load_state : out std_logic_vector(MAX_STATE downto 0)
+    );
+    end component;
+
+    signal int_reset_state : std_logic_vector(MAX_STATE downto 0);
+    signal int_reset_out : std_logic_vector(MAX_STATE downto 0);
+    signal int_load_state : std_logic_vector(MAX_STATE downto 0);
+
+    signal int_goto_state : std_logic_vector(MAX_STATE downto 0);
+    signal int_state : std_logic_vector(MAX_STATE downto 0);
+
+    signal sCountG_val : STD_LOGIC_VECTOR(3 downto 0);
+    signal sCountY_val : STD_LOGIC_VECTOR(3 downto 0);
+    signal mCountY_val : STD_LOGIC_VECTOR(3 downto 0);
+    signal mCountG_val : STD_LOGIC_VECTOR(3 downto 0);
+
+    signal sCountG_gteq_ssc : STD_LOGIC;
+    signal sCountY_gteq_sst : STD_LOGIC;
+    signal mCountY_gteq_mt : STD_LOGIC;
+    signal mCountG_gteq_msc : STD_LOGIC;
+    signal sCountG_lt_ssc : STD_LOGIC;
+    signal sCountY_lt_sst : STD_LOGIC;
+    signal mCountY_lt_mt : STD_LOGIC;
+    signal mCountG_lt_msc : STD_LOGIC;
+
+    signal ResetMCountG : STD_LOGIC;
+    signal ResetMCountY : STD_LOGIC;
+    signal ResetSCountG : STD_LOGIC;
+    signal ResetSCountY : STD_LOGIC;
+
+begin
+
+    states: nbit_register
+     generic map(
+        BITS => MAX_STATE
+    )
+     port map(
+        in_val => int_goto_state,
+        in_load => '1',
+        in_resetBar => GReset,
+        in_clock => GClock,
+        out_val => int_state
+    );
+
+    default_state :  load_default_state
+                     generic map(
+                        MAX_STATE => MAX_STATE
+                    )
+                     port map(
+                        current_state => int_state,
+                        default_state => int_reset_state,
+                        load_state => int_reset_out
+                    );
+
+    -- counters
+    mCountG: counter
+     generic map( BITS => 4)
+     port map(
+        incr => '1',
+        resetBar => ResetMCountG,
+        clock => GClock,
+        compare => MSC,
+        val_lt => mCountG_lt_msc,
+        val_gteq => mCountG_gteq_msc,
+        val => mCountG_val,
+        val_lteq => open, val_equal => open,  val_gt => open
+    );
+
+    mCountY: counter
+     generic map( BITS => 4)
+     port map(
+        incr => '1',
+        resetBar => ResetMCountY,
+        clock => GClock,
+        compare => MT,
+        val_lt => mCountY_lt_mt,
+        val_gteq => mCountY_gteq_mt,
+        val => mCountY_val,
+        val_lteq => open, val_equal => open,  val_gt => open
+    );
+
+    sCountG: counter
+     generic map( BITS => 4)
+     port map(
+        incr => '1',
+        resetBar => ResetsCountG,
+        clock => GClock,
+        compare => SSC,
+        val_lt => sCountG_lt_ssc,
+        val_gteq => sCountG_gteq_ssc,
+        val => sCountG_val,
+        val_lteq => open, val_equal => open,  val_gt => open
+    );
+
+    sCountY: counter
+     generic map( BITS => 4)
+     port map(
+        incr => '1',
+        resetBar => ResetSCountY,
+        clock => GClock,
+        compare => SST,
+        val_lt => sCountY_lt_sst,
+        val_gteq => sCountY_gteq_sst,
+        val => sCountY_val,
+        val_lteq => open, val_equal => open,  val_gt => open
+    );
+
+    -- FSM logic
+    -- state transitions
+    int_goto_state(4) <= (int_state(3) AND sCountG_gteq_ssc) OR (int_state(4) AND sCountY_lt_sst);
+    int_goto_state(3) <= (int_state(2) AND mCountY_gteq_mt ) OR (int_state(3) AND sCountG_lt_ssc);
+    int_goto_state(2) <= (int_state(1) AND mCountG_gteq_msc) OR (int_state(2) AND mCountY_lt_mt );
+    int_goto_state(1) <= (int_state(0) AND SSCS            ) OR (int_state(1) AND mCountG_lt_msc);
+    int_goto_state(0) <= (int_state(4) AND sCountY_gteq_sst) OR (int_state(0) AND NOT SSCS      );
+    int_reset_state <= "00001";
+    int_load_state <= int_goto_state OR int_reset_out; -- handle reset, idk if this is cleaner or not, but it causes compiler errors if i add another state so that's very good 
+
+    -- outputs
+    MSTL(2) <= int_state(0) OR int_state(1);
+    MSTL(1) <= int_state(2) ;
+    MSTL(0) <= int_state(3) OR int_state(4);
+
+    SSTL(2) <= int_state(3);
+    SSTL(1) <= int_state(4);
+    SSTL(0) <= int_state(0) OR int_state(1) OR int_state(2);
+
+    ResetMCountG <= NOT int_state(1);
+    ResetMCountY <= NOT int_state(2);
+    ResetSCountG <= NOT int_state(3);
+    ResetSCountY <= NOT int_state(4);
+
+    BCD1 <= (others => '0'); -- we only count up to 4bit integers??? how are we ever gonna get over 4 bits??
+    BCD2 <= mCountG_val OR mCountY_val OR sCountG_val OR sCountY_val; -- all counters are reset when we change states, it should be fine to just OR them, they're gonna be 0 when reset
+
+end architecture rtl;
+
+
